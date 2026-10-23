@@ -367,7 +367,9 @@ let D = {hero:null, quests:[], entries:{}, tutDone:false};  // DIE gespeicherten
 const S = {manage:false, adding:false, view:"quests", tut:-1}; // reiner UI-Zustand (wird nicht gespeichert)
 const form = {name:"", emoji:"", stat:"alltag", period:"day", target:2, due:""}; // Zwischenspeicher des Quest-Formulars
 
-function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&","<":"<",">":">",'"':""","'":"'"}[c])); } // HTML sicher einsetzen
+// HTML sicher einsetzen. Nutzt Zahlen-Codes (& usw.) statt benannter Entities (&),
+// damit der Code auch dann heil bleibt, wenn eine Datei-/Upload-Verarbeitung HTML-Entities umwandelt.
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>"&#"+c.charCodeAt(0)+";"); }
 function qmap(){ const m={}; D.quests.forEach(q=>m[q.id]=q); return m; } // Quests nach id nachschlagbar machen
 function uid(){ return "q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); } // eindeutige Quest-ID erzeugen
 

@@ -10,6 +10,11 @@
 <title>Leben als RPG</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23f0b43f'/%3E%3Ctext x='50' y='72' font-size='60' text-anchor='middle'%3E%E2%9A%94%EF%B8%8F%3C/text%3E%3C/svg%3E">
 <style>
+/* FARBEN & DESIGN: Alle Farben sind als Variablen (Tokens) hier im :root definiert und
+   werden im restlichen CSS nur über var(--name) genutzt. Zum Umfärben also HIER ändern.
+   Darunter folgen zwei Blöcke, die dieselben Tokens für den Dunkelmodus überschreiben
+   (einmal automatisch nach System, einmal für die manuelle Umschaltung per ◐-Knopf).
+   --st-* = die fünf Skill-Farben (müssen zu den css-Werten in STATS im Skript passen). */
 :root{
   --bg:#f3f2f8; --surface:#ffffff; --surface-2:#eceaf4; --border:#d9d7e6;
   --fg:#1b1930; --muted:#6c6884; --faint:#908ca6;
@@ -105,6 +110,8 @@ header{position:sticky;top:env(safe-area-inset-top,0px);z-index:15;background:va
 .q{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:14px;background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow)}
 .q.done{background:color-mix(in srgb,var(--sc) 9%,var(--surface));border-color:color-mix(in srgb,var(--sc) 35%,var(--border))}
 .q.archived{opacity:.55}
+.q.over{border-color:color-mix(in srgb,var(--danger) 55%,var(--border));background:color-mix(in srgb,var(--danger) 8%,var(--surface))}
+.q.over .q-name{color:var(--danger)}
 .q-ico{width:38px;height:38px;border-radius:11px;flex:none;display:grid;place-items:center;font-size:19px;background:color-mix(in srgb,var(--sc) 14%,transparent)}
 .q-body{flex:1;min-width:0}
 .q-name{font-weight:600;font-size:14.5px;line-height:1.2}
@@ -239,7 +246,7 @@ header{position:sticky;top:env(safe-area-inset-top,0px);z-index:15;background:va
 <div class="wrap">
   <header>
     <div class="header-in">
-      <div class="brand"><div class="brand-mark">⚔️</div><div class="brand-name">Leben&nbsp;als&nbsp;RPG</div></div>
+      <div class="brand"><div class="brand-mark">⚔️</div><div class="brand-name">Leben als RPG</div></div>
       <div class="hbtns">
         <button class="ibtn" id="helpBtn" hidden aria-label="Tutorial">?</button>
         <button class="ibtn" id="manageBtn" hidden>Bearbeiten</button>
@@ -254,7 +261,59 @@ header{position:sticky;top:env(safe-area-inset-top,0px);z-index:15;background:va
 
 <script>
 "use strict";
+/* ============================================================================
+   LEBEN ALS RPG — eigenständige Web-App (eine einzige HTML-Datei)
+   ----------------------------------------------------------------------------
+   ÜBERBLICK
+   - Alles steckt in dieser einen Datei: HTML (oben), CSS (im <style>), Logik (hier).
+   - Kein Server, kein Login, kein Internet nötig. Speicherung lokal im Browser
+     über localStorage (Schlüssel LS_KEY). Jedes Gerät hat seinen eigenen Stand.
+   - Hosten: Datei als index.html z. B. auf GitHub Pages / Netlify legen.
+     Updaten = neue Datei hochladen. Solange die Internet-Adresse gleich bleibt,
+     bleibt der Spielstand erhalten (localStorage hängt an der Adresse).
 
+   AUFBAU DES CODES (von oben nach unten)
+   1. KONFIGURATION: STATS, STAT_ORDER, RANK_LV, CAT_XP, Emoji-/Farblisten, TUTORIAL.
+      -> Hier stellst du Werte/Inhalte ein, ohne die Logik anzufassen.
+   2. HILFSFUNKTIONEN: Datum (dkey/mondayOf/addDays/fmtDate), Level-Mathe (levelInfo),
+      Ränge (rankTitle), XP (autoXp/penaltyXp/isOverdue).
+   3. ZUSTAND: D = gespeicherte Daten, S = reiner UI-Zustand, form = Formular-Eingaben.
+   4. SPEICHERN: load()/save() lesen/schreiben localStorage.
+   5. ABLEITUNGEN: totals() rechnet aus den Daten Level & XP je Skill.
+   6. AKTIONEN: toggle()/addQuest()/delQuest() + Backup export/import.
+   7. ANZEIGE: render() baut die Oberfläche als HTML-String und hängt Klicks via bind().
+   8. ONBOARDING + TUTORIAL.
+
+   DATENMODELL (D, wird als JSON gespeichert)
+   - D.hero   = {name, emoji, color, gender:"m"|"f", created}
+   - D.quests = Liste von Quests:
+       {id, name, emoji, stat, period:"day"|"week"|"once", target, order, done,
+        due?  (nur bei "once": Fälligkeitsdatum "YYYY-MM-DD"), doneDate?}
+   - D.entries = { "YYYY-MM-DD": {date, done:{questId:1,...}} }
+       -> Pro Tag ein Eintrag, welche täglichen/wöchentlichen Quests erledigt waren.
+       -> Einmalige Quests (once) werden NICHT hier, sondern direkt an der Quest
+          über q.done gespeichert (sie sind ja nicht an einen Wochentag gebunden).
+
+   XP & LEVEL
+   - XP pro Erledigung kommt NUR aus der Kategorie (CAT_XP), nie manuell gesetzt.
+   - autoXp(): once gibt doppelte XP. penaltyXp(): Abzug bei verpasstem To-Do.
+   - isOverdue(): true, wenn ein To-Do sein Datum überschritten und nicht erledigt ist.
+     In totals() wird dann penaltyXp abgezogen. levelInfo() fängt Minus bei 0 ab.
+   - levelInfo(xp, base): rechnet aus Gesamt-XP das Level. Kosten Level L->L+1 = base*L.
+     Hero-Level nutzt base 150, einzelne Skills base 90.
+
+   SO ÄNDERST DU TYPISCHE DINGE
+   - XP-Werte je Kategorie:            CAT_XP (Zeile ~ "const CAT_XP").
+   - Wann Ränge freigeschaltet werden: RANK_LV.
+   - Rang-Namen (m/f):                 STATS[...].ranks.
+   - Schneller/langsamer leveln:       die base-Zahlen in levelInfo-Aufrufen (150 / 90).
+   - Tutorial-Texte:                   TUTORIAL.
+   - Design/Farben:                    der :root-Block ganz oben im <style>.
+   ========================================================================== */
+
+// --- 1. KONFIGURATION ---
+// Die fünf Skills/Kategorien. ico = Emoji in der App, css = Farb-Variable aus dem
+// <style>, ranks = Titel je Level-Stufe, getrennt nach männlich (m) / weiblich (f).
 const STATS = {
   koerper:{name:"Körper", ico:"💪", css:"--st-koerper", emoji:"🏋️", ranks:{m:["Novize","Athlet","Krieger","Champion","Titan"], f:["Novizin","Athletin","Kriegerin","Championesse","Titanin"]}},
   geist:{name:"Geist", ico:"🧠", css:"--st-geist", emoji:"🧘", ranks:{m:["Träumer","Grübler","Denker","Weiser","Erleuchteter"], f:["Träumerin","Grüblerin","Denkerin","Weise","Erleuchtete"]}},
@@ -262,15 +321,21 @@ const STATS = {
   alltag:{name:"Alltag", ico:"🏠", css:"--st-alltag", emoji:"🧹", ranks:{m:["Helfer","Verwalter","Haushüter","Burgherr","Haus-Gott"], f:["Helferin","Verwalterin","Haushüterin","Burgherrin","Haus-Göttin"]}},
   beziehung:{name:"Bindung", ico:"❤️", css:"--st-beziehung", emoji:"🫶", ranks:{m:["Begleiter","Vertrauter","Herzensritter","Seelenpaar","Legende"], f:["Begleiterin","Vertraute","Herzensritterin","Seelenpaar","Legende"]}},
 };
-const STAT_ORDER = ["koerper","geist","kreativ","alltag","beziehung"];
-const RANK_LV = [1,3,6,10,15];
-const CAT_XP  = {koerper:25, geist:15, kreativ:20, alltag:15, beziehung:30};
+const STAT_ORDER = ["koerper","geist","kreativ","alltag","beziehung"]; // Reihenfolge in der Anzeige
+const RANK_LV = [1,3,6,10,15];   // Bei diesen Leveln wird je Skill der nächste Rang (Titel) freigeschaltet
+const CAT_XP  = {koerper:25, geist:15, kreativ:20, alltag:15, beziehung:30}; // XP pro Erledigung je Kategorie
+// XP für eine Erledigung. Einmalige Quests (once) geben doppelte XP.
 function autoXp(stat, period){ const b=CAT_XP[stat]||15; return period==="once" ? b*2 : b; }
+// Strafe für eine verpasste (überfällige, nicht erledigte) einmalige Quest
+function penaltyXp(stat){ return CAT_XP[stat]||15; }
+// true, wenn eine einmalige Quest ihr Fälligkeitsdatum überschritten und nicht erledigt ist
+function isOverdue(q, today){ return q.period==="once" && !q.done && q.due && dkey(today) > q.due; }
 
-const HERO_EMOJIS = ["⚔️","🛡️","🌸","🦊","🐉","🎧","🌿","⭐","🐱","🔮","🧝","🏹"];
-const HERO_COLORS = ["--st-kreativ","--st-beziehung","--st-geist","--st-koerper","--st-alltag"];
-const QEMOJIS = ["⚔️","🏋️","🍳","🧹","🧺","🐱","🎮","🎨","📚","🎸","🧘","🚿","💊","🚶","💧","📝","☎️","🛒","🌙","🏃"];
-const PERIOD_LABEL = {day:"Täglich", week:"Wöchentlich", once:"Einmalig"};
+const HERO_EMOJIS = ["⚔️","🛡️","🌸","🦊","🐉","🎧","🌿","⭐","🐱","🔮","🧝","🏹"]; // Auswahl beim Helden-Erstellen
+const HERO_COLORS = ["--st-kreativ","--st-beziehung","--st-geist","--st-koerper","--st-alltag"]; // Farb-Auswahl (Variablen aus dem <style>)
+const QEMOJIS = ["⚔️","🏋️","🍳","🧹","🧺","🐱","🎮","🎨","📚","🎸","🧘","🚿","💊","🚶","💧","📝","☎️","🛒","🌙","🏃"]; // Auswahl beim Quest-Erstellen
+const PERIOD_LABEL = {day:"Täglich", week:"Wöchentlich", once:"Einmalig"}; // Beschriftung der Quest-Arten
+// Die vier Tutorial-Schritte (erscheinen nach dem Helden-Erstellen, erneut über "?").
 const TUTORIAL = [
   {ico:"⚔️", h:"Willkommen, Held!", p:"Dein Leben als Rollenspiel: Alltag, Sport, kreative Arbeit und Zeit für andere werden zu Quests, die dich leveln lassen. Hier die wichtigsten Dinge in 4 kurzen Schritten."},
   {ico:"✅", h:"Quests erledigen", p:"Tippe eine Quest an, um sie zu erledigen — es gibt Konfetti und XP. Tägliche Quests zählen jeden Tag neu, wöchentliche über die ganze Woche, einmalige To-Dos verschwinden nach dem Abhaken."},
@@ -278,34 +343,44 @@ const TUTORIAL = [
   {ico:"🧠", h:"Skills & Skilltree", p:"Jede Quest füttert einen von fünf Skills: Körper, Geist, Kreativ, Alltag, Bindung. Im Tab „Skilltree“ steigen deine Ränge. Dein Fortschritt wird direkt auf deinem Handy gespeichert."},
 ];
 
+// --- 2. HILFSFUNKTIONEN ---
+// dkey: Datum -> "YYYY-MM-DD" (der Schlüssel, unter dem ein Tag in D.entries steht).
 const dkey = d => { const z=new Date(d); z.setHours(0,0,0,0);
   return z.getFullYear()+"-"+String(z.getMonth()+1).padStart(2,"0")+"-"+String(z.getDate()).padStart(2,"0"); };
-function mondayOf(d){ const z=new Date(d); z.setHours(0,0,0,0); const w=(z.getDay()+6)%7; z.setDate(z.getDate()-w); return z; }
-function addDays(d,n){ const z=new Date(d); z.setDate(z.getDate()+n); return z; }
-const WD = ["Mo","Di","Mi","Do","Fr","Sa","So"];
-function levelInfo(xp, base){ let lvl=1, need=base, acc=0;
+function mondayOf(d){ const z=new Date(d); z.setHours(0,0,0,0); const w=(z.getDay()+6)%7; z.setDate(z.getDate()-w); return z; } // Montag der Woche
+function addDays(d,n){ const z=new Date(d); z.setDate(z.getDate()+n); return z; } // Datum +/- n Tage
+const WD = ["Mo","Di","Mi","Do","Fr","Sa","So"]; // Wochentag-Kürzel (Montag = Index 0)
+// "2026-10-23" -> "23.10." (für die Anzeige des Fälligkeitsdatums)
+function fmtDate(key){ const p=String(key).split("-"); return p.length===3 ? (+p[2])+"."+(+p[1])+"." : key; }
+// Rechnet aus Gesamt-XP das Level. Kosten für Stufe L->L+1 = base*L (steigt also an).
+// Rückgabe: lvl (aktuelles Level), into/span (XP im aktuellen Level / bis zum nächsten), pct (Balkenfüllung 0..1).
+function levelInfo(xp, base){ xp=Math.max(0,xp); let lvl=1, need=base, acc=0;
   while(xp >= acc+need){ acc+=need; lvl++; need=base*lvl; }
   return {lvl, into:Math.round(xp-acc), span:need, pct:Math.max(0,Math.min(1,(xp-acc)/need))}; }
-function ranksOf(stat,g){ const r=STATS[stat].ranks; return (g==="f"?r.f:r.m); }
-function rankIdx(lv){ let idx=0; for(let i=0;i<RANK_LV.length;i++){ if(lv>=RANK_LV[i]) idx=i; } return idx; }
-function rankTitle(stat,lv,g){ return ranksOf(stat,g)[rankIdx(lv)]; }
+function ranksOf(stat,g){ const r=STATS[stat].ranks; return (g==="f"?r.f:r.m); } // Rang-Titel-Liste nach Geschlecht
+function rankIdx(lv){ let idx=0; for(let i=0;i<RANK_LV.length;i++){ if(lv>=RANK_LV[i]) idx=i; } return idx; } // welcher Rang bei diesem Level
+function rankTitle(stat,lv,g){ return ranksOf(stat,g)[rankIdx(lv)]; } // aktueller Titel (z. B. "Kriegerin")
 
-const LS_KEY="leben-als-rpg";
-let D = {hero:null, quests:[], entries:{}, tutDone:false};  // persisted data
-const S = {manage:false, adding:false, view:"quests", tut:-1};
-const form = {name:"", emoji:"", stat:"alltag", period:"day", target:2};
+// --- 3. ZUSTAND ---
+const LS_KEY="leben-als-rpg";                               // Schlüssel in localStorage
+let D = {hero:null, quests:[], entries:{}, tutDone:false};  // DIE gespeicherten Daten (siehe Datenmodell oben)
+const S = {manage:false, adding:false, view:"quests", tut:-1}; // reiner UI-Zustand (wird nicht gespeichert)
+const form = {name:"", emoji:"", stat:"alltag", period:"day", target:2, due:""}; // Zwischenspeicher des Quest-Formulars
 
-function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function qmap(){ const m={}; D.quests.forEach(q=>m[q.id]=q); return m; }
-function uid(){ return "q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&","<":"<",">":">",'"':""","'":"'"}[c])); } // HTML sicher einsetzen
+function qmap(){ const m={}; D.quests.forEach(q=>m[q.id]=q); return m; } // Quests nach id nachschlagbar machen
+function uid(){ return "q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); } // eindeutige Quest-ID erzeugen
 
+// --- 4. SPEICHERN ---
+// load() beim Start aus localStorage lesen, save() nach jeder Änderung schreiben.
 function load(){
   try{ const raw=localStorage.getItem(LS_KEY); if(raw){ const o=JSON.parse(raw);
     D.hero=o.hero||null; D.quests=Array.isArray(o.quests)?o.quests:[]; D.entries=o.entries||{}; D.tutDone=!!o.tutDone; } }catch(e){}
 }
 function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(D)); }catch(e){} }
 
-function lsTheme(v){ try{ if(v===undefined) return localStorage.getItem(LS_KEY+"-theme"); localStorage.setItem(LS_KEY+"-theme",v); }catch(e){ return null; } }
+function lsTheme(v){ try{ if(v===undefined) return localStorage.getItem(LS_KEY+"-theme"); localStorage.setItem(LS_KEY+"-theme",v); }catch(e){ return null; } } // Hell/Dunkel merken
+// Kopfzeilen-Knöpfe verdrahten (einmalig beim Laden): Theme, Bearbeiten, Tutorial, Datei-Import.
 (function(){
   const saved=lsTheme();
   if(saved==="dark"||saved==="light") document.documentElement.setAttribute("data-theme",saved);
@@ -320,41 +395,53 @@ function lsTheme(v){ try{ if(v===undefined) return localStorage.getItem(LS_KEY+"
   document.getElementById("impFile").addEventListener("change",importFile);
 })();
 
-/* ---------- derive ---------- */
-function doneOn(qid,key){ const e=D.entries[key]; return !!(e&&e.done&&e.done[qid]); }
+/* ---------- 5. ABLEITUNGEN (aus den Daten gerechnet, nichts gespeichert) ---------- */
+function doneOn(qid,key){ const e=D.entries[key]; return !!(e&&e.done&&e.done[qid]); } // war Quest an Tag "key" erledigt?
+// totals(): summiert XP je Skill und gesamt. Tägliche/wöchentliche aus D.entries,
+// einmalige aus q.done (+XP) bzw. überfällig & offen (−penaltyXp). Basis fürs Level.
 function totals(){
-  const m=qmap(); const stat={}; STAT_ORDER.forEach(k=>stat[k]=0); let total=0;
+  const m=qmap(); const today=new Date(); const stat={}; STAT_ORDER.forEach(k=>stat[k]=0); let total=0;
   for(const key in D.entries){ const done=D.entries[key].done||{};
     for(const qid in done){ const q=m[qid]; if(done[qid]&&q&&q.period!=="once"){ const xp=autoXp(q.stat,q.period); stat[q.stat]=(stat[q.stat]||0)+xp; total+=xp; } } }
-  D.quests.forEach(q=>{ if(q.period==="once"&&q.done){ const xp=autoXp(q.stat,"once"); stat[q.stat]=(stat[q.stat]||0)+xp; total+=xp; } });
+  D.quests.forEach(q=>{
+    if(q.period!=="once") return;
+    if(q.done){ const xp=autoXp(q.stat,"once"); stat[q.stat]=(stat[q.stat]||0)+xp; total+=xp; }
+    else if(isOverdue(q,today)){ const p=penaltyXp(q.stat); stat[q.stat]=(stat[q.stat]||0)-p; total-=p; }
+  });
   return {stat,total};
 }
-function weekCount(qid,anchor){ const mon=mondayOf(anchor); let c=0;
+function weekCount(qid,anchor){ const mon=mondayOf(anchor); let c=0; // wie oft diese Woche erledigt
   for(let i=0;i<7;i++){ if(doneOn(qid,dkey(addDays(mon,i)))) c++; } return c; }
-function dayStreak(qid,today){ let c=0; let start=doneOn(qid,dkey(today))?0:1;
+function dayStreak(qid,today){ let c=0; let start=doneOn(qid,dkey(today))?0:1; // Serie aufeinanderfolgender Tage
   for(let i=start;i<400;i++){ if(doneOn(qid,dkey(addDays(today,-i)))) c++; else break; } return c; }
-function weekStreak(qid,target,today){ let c=0; let wk=mondayOf(today);
+function weekStreak(qid,target,today){ let c=0; let wk=mondayOf(today); // Serie erfüllter Wochen (target erreicht)
   if(weekCount(qid,wk)<target) wk=addDays(wk,-7);
   for(let i=0;i<200;i++){ if(weekCount(qid,wk)>=target){ c++; wk=addDays(wk,-7);} else break; } return c; }
 
-/* ---------- actions ---------- */
+/* ---------- 6. AKTIONEN (ändern D, speichern, neu zeichnen) ---------- */
+// Quest an-/abhaken. once: schaltet q.done um. day/week: setzt Haken im heutigen D.entries-Eintrag.
 function toggle(q){
-  if(S.manage) return;
+  if(S.manage) return; // im Bearbeiten-Modus wird nicht abgehakt, sondern gelöscht
   if(q.period==="once"){ q.done=!q.done; q.doneDate=q.done?dkey(new Date()):null; if(q.done) celebrate(q); save(); render(); return; }
   const key=dkey(new Date()); const cur=D.entries[key]||{date:key,done:{}}; const done=Object.assign({},cur.done);
   const nowOn=!done[q.id]; if(nowOn) done[q.id]=1; else delete done[q.id];
   D.entries[key]={date:key,done}; if(nowOn) celebrate(q); save(); render();
 }
+// Neue Quest aus dem Formular (form) anlegen. Bei "once" ist ein Fälligkeitsdatum Pflicht.
 function addQuest(){
   const name=form.name.trim(); if(!name) return;
+  if(form.period==="once" && !form.due) return; // Datum bei To-Dos Pflicht
   const maxOrder=D.quests.reduce((m,q)=>Math.max(m,q.order||0),0);
-  D.quests.push({id:uid(), name, emoji:form.emoji||STATS[form.stat].emoji, stat:form.stat, period:form.period,
-    target:form.period==="week"?Math.max(1,Math.min(7,form.target)):1, order:maxOrder+1, done:false});
-  S.adding=false; form.name=""; form.emoji=""; save(); render();
+  const q={id:uid(), name, emoji:form.emoji||STATS[form.stat].emoji, stat:form.stat, period:form.period,
+    target:form.period==="week"?Math.max(1,Math.min(7,form.target)):1, order:maxOrder+1, done:false};
+  if(form.period==="once") q.due=form.due;
+  D.quests.push(q);
+  S.adding=false; form.name=""; form.emoji=""; form.due=""; save(); render();
 }
-function delQuest(qid){ D.quests=D.quests.filter(q=>q.id!==qid); save(); render(); }
+function delQuest(qid){ D.quests=D.quests.filter(q=>q.id!==qid); save(); render(); } // Quest löschen
 
-/* ---------- backup ---------- */
+/* ---------- BACKUP: Spielstand als Datei sichern / laden ---------- */
+// exportData: lädt D als JSON-Datei herunter. importFile: liest so eine Datei zurück in D.
 function exportData(){
   const blob=new Blob([JSON.stringify(D,null,2)],{type:"application/json"});
   const url=URL.createObjectURL(blob); const a=document.createElement("a");
@@ -370,7 +457,8 @@ function importFile(ev){
   r.readAsText(f);
 }
 
-/* ---------- confetti (self-contained, no library) ---------- */
+/* ---------- KONFETTI (eigene kleine Umsetzung auf einem Canvas, ohne Bibliothek) ---------- */
+// celebrate() wird beim Erledigen gerufen; initFx/tick betreiben die Animation.
 let fx=null;
 function initFx(){ const c=document.getElementById("fxcanvas"); const ctx=c.getContext("2d");
   function size(){ c.width=innerWidth*devicePixelRatio; c.height=innerHeight*devicePixelRatio; }
@@ -393,10 +481,13 @@ function celebrate(q){
       a:1,rot:Math.random()*6,vr:(Math.random()-0.5)*0.4,s:(6+Math.random()*5)*devicePixelRatio,col:cols[i%cols.length]}); }
 }
 
-/* ---------- render ---------- */
+/* ---------- 7. ANZEIGE ---------- */
+// render() ist die zentrale Zeichenfunktion: baut die ganze Oberfläche als HTML-String
+// und schreibt sie in #app. Nach jeder Änderung von D oder S wird render() gerufen.
+// Ohne Helden -> Onboarding. Sonst: Heldenkarte + Tabs (Quests/Skilltree) + Inhalt.
 function render(){
   const app=document.getElementById("app"); const mBtn=document.getElementById("manageBtn"); const hBtn=document.getElementById("helpBtn");
-  if(!D.hero){ mBtn.hidden=true; hBtn.hidden=true; renderSetup(app); renderTut(); return; }
+  if(!D.hero){ mBtn.hidden=true; hBtn.hidden=true; renderSetup(app); renderTut(); return; } // noch kein Held -> Erstellen
   hBtn.hidden=false; mBtn.hidden=false; mBtn.textContent=S.manage?"Fertig":"Bearbeiten"; mBtn.classList.toggle("on",S.manage);
 
   const today=new Date(); const tkey=dkey(today);
@@ -430,6 +521,8 @@ function render(){
   app.innerHTML=html; bind(app); renderTut();
 }
 
+// Baut die drei Quest-Listen (Heute / Diese Woche / To-Do einmalig). Im Bearbeiten-Modus
+// zusätzlich der "+ Neue Quest"-Knopf und die Backup-Knöpfe; sonst die Wochenleiste.
 function renderQuests(today,tkey,pc){
   const dayQ=D.quests.filter(q=>q.period==="day");
   const weekQ=D.quests.filter(q=>q.period==="week");
@@ -478,6 +571,8 @@ function renderQuests(today,tkey,pc){
   return html;
 }
 
+// Eine einzelne Quest-Zeile als HTML. Zeigt je nach Art Streak/Wochenziel/Fälligkeit und
+// rechts den Abhak-Knopf (bzw. Lösch-Knopf im Bearbeiten-Modus). "over" = verpasstes To-Do.
 function questRow(q,tkey,today,archived){
   const sc=esc(STATS[q.stat].css); const xp=autoXp(q.stat,q.period);
   let done=false, meta="";
@@ -486,11 +581,14 @@ function questRow(q,tkey,today,archived){
   else if(q.period==="week"){ done=doneOn(q.id,tkey);
     const wc=weekCount(q.id,today); const met=wc>=q.target; const ws=weekStreak(q.id,q.target,today);
     meta=`<span class="pill goal ${met?"met":""}">${wc}/${q.target} Woche${met?" ✓":""}</span>`+(ws>0?`<span class="streak">🔥 ${ws} Wo.</span>`:""); }
-  else { done=!!q.done; meta=`<span class="pill cat" style="--sc:var(${sc})">${STATS[q.stat].ico} ${STATS[q.stat].name}</span><span>${done?"✓ erledigt":"einmalig"}</span>`; }
+  else { done=!!q.done; const over=isOverdue(q,today);
+    let statusTxt = done ? "✓ erledigt" : over ? `⚠️ verpasst · −${penaltyXp(q.stat)} XP` : (q.due?`bis ${fmtDate(q.due)}`:"einmalig");
+    meta=`<span class="pill cat" style="--sc:var(${sc})">${STATS[q.stat].ico} ${STATS[q.stat].name}</span><span>${statusTxt}</span>`; }
+  const over = isOverdue(q,today);
   const right = S.manage
     ? `<button class="del" data-del="${esc(q.id)}" aria-label="Quest löschen">🗑</button>`
     : `<button class="check" data-q="${esc(q.id)}" aria-label="${esc(q.name)} erledigen"><span class="box"><svg viewBox="0 0 24 24"><path d="M4 12.5l5 5L20 6"/></svg></span></button>`;
-  const cls=(done&&!S.manage?"done ":"")+(S.manage?"editing ":"")+(archived?"archived ":"");
+  const cls=(done&&!S.manage?"done ":"")+(S.manage?"editing ":"")+(archived?"archived ":"")+(over&&!S.manage?"over ":"");
   return `<div class="q ${cls}" style="--sc:var(${sc})">
     <div class="q-ico">${esc(q.emoji||STATS[q.stat].emoji)}</div>
     <div class="q-body"><div class="q-name">${esc(q.name)}</div>
@@ -498,6 +596,8 @@ function questRow(q,tkey,today,archived){
     ${right}</div>`;
 }
 
+// Skilltree-Ansicht: je Kategorie ein Ast mit Level, aktuellem Rang und den 5 Rang-Knoten.
+// Die Klasse g-m/g-f steuert im CSS die eckige (m) bzw. runde (f) Knotenform.
 function renderTree(T,g){
   let html='<div class="tree g-'+(g==="f"?"f":"m")+'">';
   STAT_ORDER.forEach(k=>{ const sc=esc(STATS[k].css); const xp=T.stat[k]||0; const L=levelInfo(xp,90);
@@ -519,6 +619,8 @@ function renderTree(T,g){
   return html;
 }
 
+// Das Formular zum Anlegen einer Quest (Art, Name, Kategorie, ggf. Wochenziel/Fälligkeit, Symbol).
+// Liest/schreibt das form-Objekt; bei "once" erscheint das Pflicht-Datumsfeld und der Penalty-Hinweis.
 function addForm(){
   const xp=autoXp(form.stat,form.period);
   const types=["day","week","once"].map(t=>`<button class="${form.period===t?"on":""}" data-type="${t}">${PERIOD_LABEL[t]}</button>`).join("");
@@ -527,36 +629,51 @@ function addForm(){
   const freq = form.period==="week"
     ? `<div class="frow"><div class="flab">Wie oft pro Woche</div>
         <div class="estep"><button data-step="-1">−</button><span>${form.target}× / Woche</span><button data-step="1">+</button></div></div>` : "";
+  const dueBlock = form.period==="once"
+    ? `<div class="frow"><div class="flab">Bis wann erledigen</div>
+        <input class="finput" id="qdue" type="date" value="${esc(form.due)}"></div>` : "";
+  const p = penaltyXp(form.stat);
   const xpLine = form.period==="week" ? `✨ Automatisch: +${xp} XP pro Mal · ~${xp*form.target} XP/Woche`
-    : form.period==="once" ? `✨ Automatisch: +${xp} XP (einmalig, doppelter Wert)` : `✨ Automatisch: +${xp} XP pro Tag`;
+    : form.period==="once" ? `✨ +${xp} XP wenn erledigt · ⚠️ −${p} XP, wenn der Tag ohne Erledigung vergeht`
+    : `✨ Automatisch: +${xp} XP pro Tag`;
+  const canSave = form.name.trim() && (form.period!=="once" || form.due);
   return `<div class="form"><h3>Neue Quest</h3>
     <div class="frow"><div class="flab">Art</div><div class="seg">${types}</div></div>
     <div class="frow"><div class="flab">Name</div>
       <input class="finput" id="qname" value="${esc(form.name)}" placeholder="z. B. Keller aufräumen" maxlength="40"></div>
     <div class="frow"><div class="flab">Kategorie (welcher Skill steigt)</div><div class="chips">${cats}</div></div>
-    ${freq}
+    ${freq}${dueBlock}
     <div class="frow"><div class="flab">Symbol (optional)</div><div class="epick">${emos}</div></div>
     <div class="xphint">${xpLine}</div>
     <div class="fbtns"><button class="fbtn cancel" id="fcancel">Abbrechen</button>
-      <button class="fbtn save" id="fsave" ${form.name.trim()?"":"disabled"}>Quest anlegen</button></div></div>`;
+      <button class="fbtn save" id="fsave" ${canSave?"":"disabled"}>Quest anlegen</button></div></div>`;
 }
 
+// render() erzeugt nur HTML; bind() hängt danach die Klick-/Eingabe-Reaktionen an die
+// Elemente (erkennbar an data-...-Attributen). Muss nach jedem render() laufen.
 function bind(app){
   app.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{ S.view=b.getAttribute("data-view"); render(); });
   app.querySelectorAll("[data-q]").forEach(b=>b.onclick=()=>{ const q=qmap()[b.getAttribute("data-q")]; if(q) toggle(q); });
   app.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>delQuest(b.getAttribute("data-del")));
   app.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>{ S.adding=true; render(); const n=document.getElementById("qname"); if(n) n.focus(); });
-  app.querySelectorAll("[data-type]").forEach(b=>b.onclick=()=>{ form.period=b.getAttribute("data-type"); render(); });
+  app.querySelectorAll("[data-type]").forEach(b=>b.onclick=()=>{ form.period=b.getAttribute("data-type");
+    if(form.period==="once" && !form.due) form.due=dkey(new Date()); // To-Do: Fälligkeit standardmäßig heute
+    render(); });
   app.querySelectorAll("[data-cat]").forEach(b=>b.onclick=()=>{ form.stat=b.getAttribute("data-cat"); render(); });
   app.querySelectorAll("[data-emo]").forEach(b=>b.onclick=()=>{ const e=b.getAttribute("data-emo"); form.emoji=form.emoji===e?"":e; render(); });
   app.querySelectorAll("[data-step]").forEach(b=>b.onclick=()=>{ form.target=Math.max(1,Math.min(7,form.target+ +b.getAttribute("data-step"))); render(); });
   app.querySelectorAll("[data-export]").forEach(b=>b.onclick=exportData);
   app.querySelectorAll("[data-import]").forEach(b=>b.onclick=()=>document.getElementById("impFile").click());
-  const nm=document.getElementById("qname"); if(nm) nm.oninput=()=>{ form.name=nm.value; const sv=document.getElementById("fsave"); if(sv) sv.disabled=!nm.value.trim(); };
+  const nm=document.getElementById("qname"); if(nm) nm.oninput=()=>{ form.name=nm.value;
+    const sv=document.getElementById("fsave"); if(sv) sv.disabled=!(nm.value.trim() && (form.period!=="once"||form.due)); };
+  const du=document.getElementById("qdue"); if(du) du.onchange=()=>{ form.due=du.value;
+    const sv=document.getElementById("fsave"); if(sv) sv.disabled=!(form.name.trim() && form.due); };
   const sv=document.getElementById("fsave"); if(sv) sv.onclick=addQuest;
   const cn=document.getElementById("fcancel"); if(cn) cn.onclick=()=>{ S.adding=false; form.name=""; form.emoji=""; render(); };
 }
 
+// Tutorial-Overlay. S.tut = aktueller Schritt (-1 = aus). Wird nach dem Erstellen automatisch
+// gestartet (wenn D.tutDone falsch) und über den "?"-Knopf erneut aufrufbar.
 function renderTut(){
   const root=document.getElementById("tutRoot");
   if(S.tut<0 || S.tut>=TUTORIAL.length){ root.innerHTML=""; return; }
@@ -574,7 +691,9 @@ function renderTut(){
   root.querySelector("#tutNext").onclick=()=>{ if(last) close(); else { S.tut++; renderTut(); } };
 }
 
-/* ---------- onboarding ---------- */
+/* ---------- 8. ONBOARDING (Helden-Erstellung beim ersten Start) ---------- */
+// setupState hält die Eingaben, bis auf "Abenteuer starten" gedrückt wird; dann wird
+// D.hero gesetzt, gespeichert und (falls noch nicht gesehen) das Tutorial gestartet.
 let setupState=null;
 function renderSetup(app){
   if(!setupState) setupState={name:"", emoji:"⚔️", color:"--st-kreativ", gender:"m"};
@@ -601,6 +720,7 @@ function renderSetup(app){
   };
 }
 
+// --- START: Daten laden und erstmals zeichnen ---
 load();
 render();
 </script>
